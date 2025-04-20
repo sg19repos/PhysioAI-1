@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Play, Archive, AlertCircle } from "lucide-react";
+import { Play, Archive, AlertCircle, Camera as CameraIcon, CameraOff } from "lucide-react";
 import { Camera } from '@mediapipe/camera_utils';
 import { Pose } from '@mediapipe/pose';
 import { apiRequest } from '@/lib/queryClient';
@@ -32,6 +32,7 @@ const MotionTracker: React.FC<MotionTrackerProps> = ({
   const [isRecording, setIsRecording] = useState(false);
   const [postureFeedback, setPostureFeedback] = useState<string | null>(null);
   const [postureIssue, setPostureIssue] = useState<{part: string, message: string} | null>(null);
+  const [isCameraOn, setIsCameraOn] = useState(true);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -155,6 +156,28 @@ const MotionTracker: React.FC<MotionTrackerProps> = ({
     // In a real app, this would start/stop recording the session
   };
   
+  const toggleCamera = () => {
+    const newCameraState = !isCameraOn;
+    setIsCameraOn(newCameraState);
+    
+    if (cameraRef.current) {
+      if (!newCameraState) {
+        // Turn off camera
+        cameraRef.current.stop();
+        // Clear the canvas
+        if (canvasRef.current) {
+          const ctx = canvasRef.current.getContext('2d');
+          if (ctx) {
+            ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+          }
+        }
+      } else {
+        // Turn on camera
+        cameraRef.current.start();
+      }
+    }
+  };
+  
   const getInitials = (name: string) => {
     return name.split(' ')
       .map(part => part.charAt(0))
@@ -176,7 +199,7 @@ const MotionTracker: React.FC<MotionTrackerProps> = ({
             </div>
           </div>
           <div className="flex items-center">
-            <Badge variant="success" className="mr-2">Live</Badge>
+            <Badge className="bg-green-100 text-green-800 mr-2">Live</Badge>
             <Button variant="destructive" size="sm">End Session</Button>
           </div>
         </div>
@@ -201,6 +224,14 @@ const MotionTracker: React.FC<MotionTrackerProps> = ({
           width={640}
           height={480}
         />
+        
+        {!isCameraOn && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-800 bg-opacity-90">
+            <CameraOff className="h-16 w-16 text-neutral-400 mb-4" />
+            <h3 className="text-xl font-medium text-white">Camera is turned off</h3>
+            <p className="text-neutral-400 mt-2">Click "Turn On Camera" to enable motion tracking</p>
+          </div>
+        )}
         
         {postureFeedback && (
           <div className="absolute top-4 right-4 bg-red-500 text-white px-3 py-1 rounded-full text-sm font-medium flex items-center">
@@ -229,6 +260,24 @@ const MotionTracker: React.FC<MotionTrackerProps> = ({
             >
               <Archive className="h-5 w-5 mr-1" />
               {isRecording ? "Stop Recording" : "Archive Session"}
+            </Button>
+            
+            <Button 
+              onClick={toggleCamera}
+              variant="outline"
+              className="inline-flex items-center"
+            >
+              {isCameraOn ? (
+                <>
+                  <CameraOff className="h-5 w-5 mr-1" />
+                  Turn Off Camera
+                </>
+              ) : (
+                <>
+                  <CameraIcon className="h-5 w-5 mr-1" />
+                  Turn On Camera
+                </>
+              )}
             </Button>
           </div>
           <div className="flex items-center">
