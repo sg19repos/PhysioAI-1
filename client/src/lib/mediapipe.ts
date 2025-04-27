@@ -1,4 +1,4 @@
-import { Pose, Results } from '@mediapipe/pose';
+import * as poseDetection from '@mediapipe/pose';
 
 // Constants for MediaPipe Pose connections
 export const POSE_CONNECTIONS = [
@@ -17,8 +17,8 @@ export const POSE_CONNECTIONS = [
 ];
 
 // Helper function to initialize MediaPipe Pose
-export async function initializePose(): Promise<Pose> {
-  const pose = new Pose({
+export async function initializePose(): Promise<poseDetection.Pose> {
+  const pose = new poseDetection.Pose({
     locateFile: (file) => {
       return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
     }
@@ -37,7 +37,7 @@ export async function initializePose(): Promise<Pose> {
 }
 
 // Convert MediaPipe landmarks to a format suitable for our application
-export function normalizePoseLandmarks(results: Results) {
+export function normalizePoseLandmarks(results: poseDetection.Results) {
   if (!results.poseLandmarks) return null;
   
   // Normalize coordinates to be between 0-1 (MediaPipe already does this)

@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Play, Archive, AlertCircle, Camera as CameraIcon, CameraOff } from "lucide-react";
 import { Camera } from '@mediapipe/camera_utils';
-import { Pose } from '@mediapipe/pose';
+import * as poseDetection from '@mediapipe/pose';
 import { apiRequest } from '@/lib/queryClient';
 import { POSE_CONNECTIONS } from '@/lib/mediapipe';
 import { drawSkeleton } from '@/lib/poseAnalysis';
@@ -36,7 +36,7 @@ const MotionTracker: React.FC<MotionTrackerProps> = ({
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const poseRef = useRef<Pose | null>(null);
+  const poseRef = useRef<poseDetection.Pose | null>(null);
   const cameraRef = useRef<Camera | null>(null);
   const resultsRef = useRef<any>(null);
   
@@ -45,7 +45,7 @@ const MotionTracker: React.FC<MotionTrackerProps> = ({
     const initializePose = async () => {
       try {
         // Create a new Pose instance
-        const pose = new Pose({
+        const pose = new poseDetection.Pose({
           locateFile: (file) => {
             return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
           }
