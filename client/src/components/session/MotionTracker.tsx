@@ -44,12 +44,27 @@ const MotionTracker: React.FC<MotionTrackerProps> = ({
   useEffect(() => {
     const initializePose = async () => {
       try {
-        // Create a new Pose instance
-        const pose = new poseDetection.Pose({
-          locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+        // Create a new Pose instance with proper error handling
+        let pose;
+        try {
+          pose = new poseDetection.Pose({
+            locateFile: (file) => {
+              return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+            }
+          });
+        } catch (error) {
+          console.error('Error creating Pose instance:', error);
+          // Try alternative initialization
+          const Pose = (poseDetection as any).Pose || (poseDetection as any).default?.Pose;
+          if (!Pose) {
+            throw new Error('Could not find Pose constructor');
           }
-        });
+          pose = new Pose({
+            locateFile: (file: string) => {
+              return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+            }
+          });
+        }
         
         // Set pose detection options
         await pose.setOptions({
@@ -62,7 +77,7 @@ const MotionTracker: React.FC<MotionTrackerProps> = ({
         });
         
         // Set up the callback that will process pose detection results
-        pose.onResults((results) => {
+        pose.onResults((results: poseDetection.Results) => {
           resultsRef.current = results;
           
           if (canvasRef.current && results.poseLandmarks) {
