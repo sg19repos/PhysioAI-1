@@ -1,360 +1,366 @@
-import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import React, { useState } from 'react';
+import DashboardLayout from '@/components/layout/DashboardLayout';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-} from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Search, Filter, PlusCircle, BarChart2 } from "lucide-react";
-import ExerciseCard from '@/components/exercises/ExerciseCard';
+import ExerciseCard from '@/components/exercise/ExerciseCard';
+import { Search, Filter, Activity, ArrowRight } from 'lucide-react';
 import { Exercise } from '@shared/schema';
-import { getAIRecommendations, assignExerciseToPatient } from '@/lib/exercises';
-import { useToast } from '@/hooks/use-toast';
+import { getRecommendedExercises } from '@/lib/recommendation-engine';
 
-const Exercises = () => {
-  const { toast } = useToast();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState('all');
-  const [filterDifficulty, setFilterDifficulty] = useState('all');
-  const [showAssignDialog, setShowAssignDialog] = useState(false);
+const ExercisesPage: React.FC = () => {
+  const [searchTerm, setSearchTerm] = useState('');
   const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null);
-  const [recommendedExercises, setRecommendedExercises] = useState<Exercise[]>([]);
-  const [assignedExercises, setAssignedExercises] = useState<number[]>([]);
-  
+  const [selectedFilter, setSelectedFilter] = useState<string>('all');
+  const userId = 1; // This would come from authentication context
+
   // Fetch all exercises
   const { data: exercises, isLoading } = useQuery({
     queryKey: ['/api/exercises'],
-    staleTime: 300000 // 5 minutes
   });
-  
-  // Fetch patient exercises for the active patient
-  const { data: patientExercises } = useQuery({
-    queryKey: ['/api/patients/1/exercises'],
-    staleTime: 60000 // 1 minute
+
+  // Filter exercises by search term and difficulty
+  const filteredExercises = exercises?.filter(exercise => {
+    const matchesSearch = 
+      exercise.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      exercise.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      exercise.targetArea.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesDifficulty = selectedFilter === 'all' || exercise.difficulty === selectedFilter;
+    
+    return matchesSearch && matchesDifficulty;
   });
-  
-  // Update assigned exercises when patient exercises are loaded
-  useEffect(() => {
-    if (patientExercises) {
-      const assignedIds = patientExercises.map((pe: any) => pe.exerciseId);
-      setAssignedExercises(assignedIds);
+
+  // Group exercises by target area
+  const groupedExercises = filteredExercises?.reduce<Record<string, Exercise[]>>((acc, exercise) => {
+    if (!acc[exercise.targetArea]) {
+      acc[exercise.targetArea] = [];
     }
-  }, [patientExercises]);
-  
-  // Fetch AI recommendations
-  useEffect(() => {
-    const fetchRecommendations = async () => {
-      try {
-        const recommendations = await getAIRecommendations(1, 'shoulder', assignedExercises);
-        if (recommendations && recommendations.length > 0) {
-          const exercises = recommendations.map((rec: any) => rec.exercise);
-          setRecommendedExercises(exercises);
-        }
-      } catch (error) {
-        console.error('Error fetching recommendations:', error);
-      }
-    };
-    
-    if (assignedExercises.length > 0) {
-      fetchRecommendations();
-    }
-  }, [assignedExercises]);
-  
-  // Filter exercises based on search, tab, and difficulty
-  const filteredExercises = exercises?.filter((exercise: Exercise) => {
-    // Filter by search query
-    const matchesSearch = searchQuery === '' || 
-      exercise.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      exercise.description.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    // Filter by body part tab
-    const matchesTab = activeTab === 'all' || exercise.bodyPart === activeTab;
-    
-    // Filter by difficulty
-    const matchesDifficulty = filterDifficulty === 'all' || exercise.difficulty === filterDifficulty;
-    
-    return matchesSearch && matchesTab && matchesDifficulty;
-  }) || [];
-  
-  // Handle assigning an exercise
-  const handleAssignExercise = (exercise: Exercise) => {
-    setSelectedExercise(exercise);
-    setShowAssignDialog(true);
-  };
-  
-  // Submit exercise assignment
-  const handleSubmitAssignment = async () => {
-    if (!selectedExercise) return;
-    
-    try {
-      // Call API to assign exercise
-      await assignExerciseToPatient(1, selectedExercise.id, 3, 12);
-      
-      // Add to assigned exercises
-      setAssignedExercises([...assignedExercises, selectedExercise.id]);
-      
-      // Close dialog and show success toast
-      setShowAssignDialog(false);
-      
-      toast({
-        title: "Exercise Assigned",
-        description: `${selectedExercise.name} has been assigned to the patient.`,
-      });
-    } catch (error) {
-      console.error('Error assigning exercise:', error);
-      toast({
-        title: "Assignment Failed",
-        description: "There was a problem assigning the exercise. Please try again.",
-        variant: "destructive"
-      });
-    }
-  };
-  
-  // Calculate counts for difficulty badges
-  const difficultyCount = {
-    beginner: exercises?.filter((e: Exercise) => e.difficulty === 'beginner').length || 0,
-    intermediate: exercises?.filter((e: Exercise) => e.difficulty === 'intermediate').length || 0,
-    advanced: exercises?.filter((e: Exercise) => e.difficulty === 'advanced').length || 0
-  };
-  
+    acc[exercise.targetArea].push(exercise);
+    return acc;
+  }, {});
+
+  // Get recommended exercises based on user's progress
+  const recommendedExercises = exercises ? getRecommendedExercises(exercises, userId, 5) : [];
+
   return (
-    <div>
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between pb-6 border-b border-neutral-200">
-        <div>
-          <h1 className="text-2xl font-bold text-neutral-900">Exercise Library</h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            Browse and assign exercises to patients
-          </p>
-        </div>
-        
-        <div className="mt-4 md:mt-0 flex space-x-2">
-          <Button className="inline-flex items-center">
-            <PlusCircle className="-ml-1 mr-2 h-5 w-5" />
-            Create New Exercise
-          </Button>
-        </div>
+    <DashboardLayout title="Exercises">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold mb-2">Exercises Library</h1>
+        <p className="text-neutral-600">
+          Browse and explore exercises recommended by your physiotherapist
+        </p>
       </div>
-      
-      {/* Filters and Search */}
-      <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div className="relative max-w-md w-full">
-          <Input 
-            type="text" 
-            placeholder="Search exercises..." 
+
+      <div className="flex flex-col md:flex-row gap-4 mb-6">
+        <div className="relative flex-grow">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-neutral-400" size={18} />
+          <Input
+            placeholder="Search exercises..."
             className="pl-10"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
           />
-          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <Search className="h-5 w-5 text-neutral-400" />
-          </div>
         </div>
-        
-        <div className="flex items-center space-x-2">
-          <span className="text-sm text-neutral-500">Difficulty:</span>
-          <select 
-            className="bg-white border border-neutral-300 rounded-md px-3 py-1.5 text-sm"
-            value={filterDifficulty}
-            onChange={(e) => setFilterDifficulty(e.target.value)}
+        <div className="flex space-x-2">
+          <Button 
+            variant={selectedFilter === 'all' ? 'default' : 'outline'}
+            onClick={() => setSelectedFilter('all')}
+            size="sm"
           >
-            <option value="all">All</option>
-            <option value="beginner">Beginner</option>
-            <option value="intermediate">Intermediate</option>
-            <option value="advanced">Advanced</option>
-          </select>
-          
-          <Button variant="outline" size="sm" className="gap-1">
-            <Filter className="h-4 w-4" />
-            More Filters
+            All
+          </Button>
+          <Button 
+            variant={selectedFilter === 'easy' ? 'default' : 'outline'}
+            onClick={() => setSelectedFilter('easy')}
+            size="sm"
+          >
+            Easy
+          </Button>
+          <Button 
+            variant={selectedFilter === 'medium' ? 'default' : 'outline'}
+            onClick={() => setSelectedFilter('medium')}
+            size="sm"
+          >
+            Medium
+          </Button>
+          <Button 
+            variant={selectedFilter === 'hard' ? 'default' : 'outline'}
+            onClick={() => setSelectedFilter('hard')}
+            size="sm"
+          >
+            Hard
           </Button>
         </div>
       </div>
-      
-      {/* Difficulty Badges */}
-      <div className="mt-4 flex flex-wrap gap-2">
-        <Badge variant="outline" className={filterDifficulty === 'all' ? 'bg-neutral-100' : ''}>
-          All ({exercises?.length || 0})
-        </Badge>
-        <Badge 
-          variant="outline" 
-          className={`bg-green-50 text-green-700 border-green-200 ${filterDifficulty === 'beginner' ? 'bg-green-100' : ''}`}
-          onClick={() => setFilterDifficulty(filterDifficulty === 'beginner' ? 'all' : 'beginner')}
-        >
-          Beginner ({difficultyCount.beginner})
-        </Badge>
-        <Badge 
-          variant="outline" 
-          className={`bg-blue-50 text-blue-700 border-blue-200 ${filterDifficulty === 'intermediate' ? 'bg-blue-100' : ''}`}
-          onClick={() => setFilterDifficulty(filterDifficulty === 'intermediate' ? 'all' : 'intermediate')}
-        >
-          Intermediate ({difficultyCount.intermediate})
-        </Badge>
-        <Badge 
-          variant="outline" 
-          className={`bg-purple-50 text-purple-700 border-purple-200 ${filterDifficulty === 'advanced' ? 'bg-purple-100' : ''}`}
-          onClick={() => setFilterDifficulty(filterDifficulty === 'advanced' ? 'all' : 'advanced')}
-        >
-          Advanced ({difficultyCount.advanced})
-        </Badge>
-      </div>
-      
-      {/* Exercise Tabs */}
-      <Tabs 
-        defaultValue="all" 
-        className="mt-6"
-        value={activeTab}
-        onValueChange={setActiveTab}
-      >
-        <TabsList className="mb-6">
+
+      <Tabs defaultValue="recommended">
+        <TabsList className="mb-4">
+          <TabsTrigger value="recommended">Recommended</TabsTrigger>
           <TabsTrigger value="all">All Exercises</TabsTrigger>
-          <TabsTrigger value="shoulder">Shoulder</TabsTrigger>
-          <TabsTrigger value="back">Back</TabsTrigger>
-          <TabsTrigger value="knee">Knee</TabsTrigger>
-          <TabsTrigger value="ankle">Ankle</TabsTrigger>
-          <TabsTrigger value="hip">Hip</TabsTrigger>
+          <TabsTrigger value="byArea">By Target Area</TabsTrigger>
         </TabsList>
-        
-        <TabsContent value="all" className="mt-0">
-          {/* AI Recommendations */}
-          {recommendedExercises.length > 0 && (
-            <div className="mb-8">
-              <div className="flex items-center mb-4">
-                <BarChart2 className="h-5 w-5 text-primary mr-2" />
-                <h2 className="text-lg font-medium">AI Recommended Exercises</h2>
-              </div>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                {recommendedExercises.map((exercise) => (
-                  <ExerciseCard
-                    key={exercise.id}
-                    exercise={exercise}
-                    isRecommended={true}
-                    onAssign={handleAssignExercise}
-                    alreadyAssigned={assignedExercises.includes(exercise.id)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-          
-          {/* All Exercises */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+
+        <TabsContent value="recommended">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {isLoading ? (
-              <p className="col-span-full text-center py-8">Loading exercises...</p>
-            ) : filteredExercises.length === 0 ? (
-              <p className="col-span-full text-center py-8">No exercises found matching your criteria</p>
-            ) : (
-              filteredExercises.map((exercise: Exercise) => (
-                <ExerciseCard
-                  key={exercise.id}
-                  exercise={exercise}
-                  isRecommended={recommendedExercises.some(rec => rec.id === exercise.id)}
-                  onAssign={handleAssignExercise}
-                  alreadyAssigned={assignedExercises.includes(exercise.id)}
-                />
+              <p>Loading exercises...</p>
+            ) : recommendedExercises.length > 0 ? (
+              recommendedExercises.map((exercise) => (
+                <Dialog key={exercise.id}>
+                  <DialogTrigger asChild>
+                    <div onClick={() => setSelectedExercise(exercise)}>
+                      <ExerciseCard 
+                        exercise={exercise}
+                        isNew={exercise.id % 2 === 0} // Just for demonstration
+                      />
+                    </div>
+                  </DialogTrigger>
+                  {selectedExercise && (
+                    <DialogContent className="sm:max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>{selectedExercise.name}</DialogTitle>
+                        <DialogDescription>
+                          {selectedExercise.description}
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4">
+                        <div>
+                          <h3 className="font-medium">Exercise Details</h3>
+                          <div className="mt-2 space-y-2">
+                            <div className="flex justify-between">
+                              <span className="text-neutral-600">Target Area</span>
+                              <span className="font-medium">{selectedExercise.targetArea}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-neutral-600">Difficulty</span>
+                              <Badge variant="outline" className={
+                                selectedExercise.difficulty === 'easy' 
+                                  ? 'bg-green-100 text-green-800 border-none' 
+                                  : selectedExercise.difficulty === 'medium'
+                                  ? 'bg-yellow-100 text-yellow-800 border-none'
+                                  : 'bg-red-100 text-red-800 border-none'
+                              }>
+                                {selectedExercise.difficulty.charAt(0).toUpperCase() + selectedExercise.difficulty.slice(1)}
+                              </Badge>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-neutral-600">Sets</span>
+                              <span className="font-medium">{selectedExercise.sets}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-neutral-600">Repetitions</span>
+                              <span className="font-medium">{selectedExercise.reps}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <h3 className="font-medium mb-2">Instructions</h3>
+                          <ol className="list-decimal list-inside space-y-1 text-neutral-600">
+                            <li>Start by standing straight with your arms by your sides.</li>
+                            <li>Slowly raise your arm forward and upward to shoulder height.</li>
+                            <li>Hold the position for a few seconds.</li>
+                            <li>Slowly lower your arm back to the starting position.</li>
+                            <li>Repeat for the recommended number of repetitions.</li>
+                          </ol>
+                        </div>
+
+                        <div className="flex justify-end">
+                          <Button>
+                            Start Exercise <ArrowRight className="ml-2 h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </DialogContent>
+                  )}
+                </Dialog>
               ))
+            ) : (
+              <p>No recommended exercises found. Try browsing all exercises.</p>
             )}
           </div>
         </TabsContent>
-        
-        {/* Body Part Specific Tabs */}
-        {['shoulder', 'back', 'knee', 'ankle', 'hip'].map(bodyPart => (
-          <TabsContent key={bodyPart} value={bodyPart} className="mt-0">
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-              {isLoading ? (
-                <p className="col-span-full text-center py-8">Loading exercises...</p>
-              ) : filteredExercises.length === 0 ? (
-                <p className="col-span-full text-center py-8">No {bodyPart} exercises found matching your criteria</p>
-              ) : (
-                filteredExercises.map((exercise: Exercise) => (
-                  <ExerciseCard
-                    key={exercise.id}
-                    exercise={exercise}
-                    isRecommended={recommendedExercises.some(rec => rec.id === exercise.id)}
-                    onAssign={handleAssignExercise}
-                    alreadyAssigned={assignedExercises.includes(exercise.id)}
-                  />
-                ))
-              )}
-            </div>
-          </TabsContent>
-        ))}
-      </Tabs>
-      
-      {/* Assignment Dialog */}
-      <Dialog open={showAssignDialog} onOpenChange={setShowAssignDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Assign Exercise</DialogTitle>
-            <DialogDescription>
-              Set repetitions and sets for this exercise
-            </DialogDescription>
-          </DialogHeader>
-          
-          {selectedExercise && (
-            <div className="space-y-4 py-4">
-              <div className="flex items-center gap-4">
-                <div className="h-16 w-16 rounded bg-neutral-100 flex items-center justify-center overflow-hidden">
-                  {selectedExercise.imageUrl ? (
-                    <img 
-                      src={selectedExercise.imageUrl} 
-                      alt={selectedExercise.name} 
-                      className="w-full h-full object-cover" 
-                    />
-                  ) : (
-                    <BarChart2 className="h-8 w-8 text-neutral-400" />
+
+        <TabsContent value="all">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {isLoading ? (
+              <p>Loading exercises...</p>
+            ) : filteredExercises && filteredExercises.length > 0 ? (
+              filteredExercises.map((exercise) => (
+                <Dialog key={exercise.id}>
+                  <DialogTrigger asChild>
+                    <div onClick={() => setSelectedExercise(exercise)}>
+                      <ExerciseCard exercise={exercise} />
+                    </div>
+                  </DialogTrigger>
+                  {selectedExercise && (
+                    <DialogContent className="sm:max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>{selectedExercise.name}</DialogTitle>
+                        <DialogDescription>
+                          {selectedExercise.description}
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4">
+                        <div>
+                          <h3 className="font-medium">Exercise Details</h3>
+                          <div className="mt-2 space-y-2">
+                            <div className="flex justify-between">
+                              <span className="text-neutral-600">Target Area</span>
+                              <span className="font-medium">{selectedExercise.targetArea}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-neutral-600">Difficulty</span>
+                              <Badge variant="outline" className={
+                                selectedExercise.difficulty === 'easy' 
+                                  ? 'bg-green-100 text-green-800 border-none' 
+                                  : selectedExercise.difficulty === 'medium'
+                                  ? 'bg-yellow-100 text-yellow-800 border-none'
+                                  : 'bg-red-100 text-red-800 border-none'
+                              }>
+                                {selectedExercise.difficulty.charAt(0).toUpperCase() + selectedExercise.difficulty.slice(1)}
+                              </Badge>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-neutral-600">Sets</span>
+                              <span className="font-medium">{selectedExercise.sets}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-neutral-600">Repetitions</span>
+                              <span className="font-medium">{selectedExercise.reps}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <h3 className="font-medium mb-2">Instructions</h3>
+                          <ol className="list-decimal list-inside space-y-1 text-neutral-600">
+                            <li>Start by standing straight with your arms by your sides.</li>
+                            <li>Slowly raise your arm forward and upward to shoulder height.</li>
+                            <li>Hold the position for a few seconds.</li>
+                            <li>Slowly lower your arm back to the starting position.</li>
+                            <li>Repeat for the recommended number of repetitions.</li>
+                          </ol>
+                        </div>
+
+                        <div className="flex justify-end">
+                          <Button>
+                            Start Exercise <ArrowRight className="ml-2 h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </DialogContent>
                   )}
-                </div>
-                <div>
-                  <h3 className="font-medium">{selectedExercise.name}</h3>
-                  <p className="text-sm text-neutral-500">{selectedExercise.description}</p>
+                </Dialog>
+              ))
+            ) : (
+              <div className="col-span-3 text-center py-12">
+                <Activity className="h-12 w-12 text-neutral-300 mx-auto mb-4" />
+                <h3 className="font-medium text-neutral-800 mb-1">No Exercises Found</h3>
+                <p className="text-neutral-600">
+                  Try adjusting your search or filters.
+                </p>
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="byArea">
+          {isLoading ? (
+            <p>Loading exercises...</p>
+          ) : groupedExercises && Object.keys(groupedExercises).length > 0 ? (
+            Object.entries(groupedExercises).map(([targetArea, areaExercises]) => (
+              <div key={targetArea} className="mb-8">
+                <h2 className="text-xl font-semibold mb-4 capitalize">{targetArea} Exercises</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {areaExercises.map((exercise) => (
+                    <Dialog key={exercise.id}>
+                      <DialogTrigger asChild>
+                        <div onClick={() => setSelectedExercise(exercise)}>
+                          <ExerciseCard exercise={exercise} />
+                        </div>
+                      </DialogTrigger>
+                      {selectedExercise && (
+                        <DialogContent className="sm:max-w-md">
+                          <DialogHeader>
+                            <DialogTitle>{selectedExercise.name}</DialogTitle>
+                            <DialogDescription>
+                              {selectedExercise.description}
+                            </DialogDescription>
+                          </DialogHeader>
+                          <div className="space-y-4">
+                            <div>
+                              <h3 className="font-medium">Exercise Details</h3>
+                              <div className="mt-2 space-y-2">
+                                <div className="flex justify-between">
+                                  <span className="text-neutral-600">Target Area</span>
+                                  <span className="font-medium">{selectedExercise.targetArea}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-neutral-600">Difficulty</span>
+                                  <Badge variant="outline" className={
+                                    selectedExercise.difficulty === 'easy' 
+                                      ? 'bg-green-100 text-green-800 border-none' 
+                                      : selectedExercise.difficulty === 'medium'
+                                      ? 'bg-yellow-100 text-yellow-800 border-none'
+                                      : 'bg-red-100 text-red-800 border-none'
+                                  }>
+                                    {selectedExercise.difficulty.charAt(0).toUpperCase() + selectedExercise.difficulty.slice(1)}
+                                  </Badge>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-neutral-600">Sets</span>
+                                  <span className="font-medium">{selectedExercise.sets}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-neutral-600">Repetitions</span>
+                                  <span className="font-medium">{selectedExercise.reps}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div>
+                              <h3 className="font-medium mb-2">Instructions</h3>
+                              <ol className="list-decimal list-inside space-y-1 text-neutral-600">
+                                <li>Start by standing straight with your arms by your sides.</li>
+                                <li>Slowly raise your arm forward and upward to shoulder height.</li>
+                                <li>Hold the position for a few seconds.</li>
+                                <li>Slowly lower your arm back to the starting position.</li>
+                                <li>Repeat for the recommended number of repetitions.</li>
+                              </ol>
+                            </div>
+
+                            <div className="flex justify-end">
+                              <Button>
+                                Start Exercise <ArrowRight className="ml-2 h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        </DialogContent>
+                      )}
+                    </Dialog>
+                  ))}
                 </div>
               </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium">Sets</label>
-                  <Input type="number" defaultValue="3" min="1" className="mt-1" />
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Repetitions</label>
-                  <Input type="number" defaultValue="12" min="1" className="mt-1" />
-                </div>
-              </div>
-              
-              <div>
-                <label className="text-sm font-medium">Additional Instructions</label>
-                <Input type="text" placeholder="Any specific guidance for this patient" className="mt-1" />
-              </div>
+            ))
+          ) : (
+            <div className="text-center py-12">
+              <Activity className="h-12 w-12 text-neutral-300 mx-auto mb-4" />
+              <h3 className="font-medium text-neutral-800 mb-1">No Exercises Found</h3>
+              <p className="text-neutral-600">
+                Try adjusting your search or filters.
+              </p>
             </div>
           )}
-          
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAssignDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSubmitAssignment}>
-              Assign to Patient
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+        </TabsContent>
+      </Tabs>
+    </DashboardLayout>
   );
 };
 
-export default Exercises;
+export default ExercisesPage;
