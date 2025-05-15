@@ -11,7 +11,6 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "^4.4.1",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
     "@mediapipe/pose": "^0.5.1675469404",
@@ -55,6 +54,7 @@
     "@tensorflow/tfjs-backend-webgpu": "^4.22.0",
     "@tensorflow/tfjs-converter": "^4.22.0",
     "@tensorflow/tfjs-core": "^4.22.0",
+    "@vitejs/plugin-react": "^4.4.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
