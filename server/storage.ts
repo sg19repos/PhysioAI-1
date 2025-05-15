@@ -1,583 +1,768 @@
 import { 
-  User, InsertUser, users,
-  Patient, InsertPatient, patients,
-  Exercise, InsertExercise, exercises,
-  PatientExercise, InsertPatientExercise, patientExercises,
-  Session, InsertSession, sessions,
-  ProgressMeasurement, InsertProgressMeasurement, progressMeasurements,
-  Alert, InsertAlert, alerts
+  User, InsertUser, Exercise, InsertExercise, Session, InsertSession,
+  SessionExercise, InsertSessionExercise, ProgressRecord, InsertProgressRecord,
+  EngagementMetric, InsertEngagementMetric, TherapistNote, InsertTherapistNote,
+  PaymentRecord, InsertPaymentRecord,
+  users, exercises, sessions, sessionExercises, progressRecords, 
+  engagementMetrics, therapistNotes, paymentRecords
 } from "@shared/schema";
+import { eq, desc, count } from "drizzle-orm";
+import { db } from "./db";
 
-// Storage interface
 export interface IStorage {
-  // User operations
+  // User methods
   getUser(id: number): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   
-  // Patient operations
-  getPatient(id: number): Promise<Patient | undefined>;
-  getPatientByUserId(userId: number): Promise<Patient | undefined>;
-  getPatientsByTherapistId(therapistId: number): Promise<Patient[]>;
-  createPatient(patient: InsertPatient): Promise<Patient>;
-  updatePatientEngagement(id: number, score: number): Promise<Patient | undefined>;
-  updatePatientStatus(id: number, status: string): Promise<Patient | undefined>;
-  
-  // Exercise operations
+  // Exercise methods
   getExercise(id: number): Promise<Exercise | undefined>;
   getAllExercises(): Promise<Exercise[]>;
-  getExercisesByBodyPart(bodyPart: string): Promise<Exercise[]>;
+  getExercisesByTargetArea(targetArea: string): Promise<Exercise[]>;
   createExercise(exercise: InsertExercise): Promise<Exercise>;
   
-  // PatientExercise operations
-  getPatientExercise(id: number): Promise<PatientExercise | undefined>;
-  getPatientExercisesByPatientId(patientId: number): Promise<PatientExercise[]>;
-  createPatientExercise(patientExercise: InsertPatientExercise): Promise<PatientExercise>;
-  updatePatientExerciseCompletion(id: number, performance: number, feedback?: string): Promise<PatientExercise | undefined>;
-  
-  // Session operations
+  // Session methods
   getSession(id: number): Promise<Session | undefined>;
   getSessionsByPatientId(patientId: number): Promise<Session[]>;
-  getActiveSessionsByTherapistId(therapistId: number): Promise<Session[]>;
   createSession(session: InsertSession): Promise<Session>;
-  updateSessionStatus(id: number, status: string, endTime?: Date): Promise<Session | undefined>;
-  updateSessionData(id: number, postureQuality?: number, rangeOfMotion?: any, painLevel?: number, notes?: string): Promise<Session | undefined>;
+  updateSessionStatus(id: number, status: string): Promise<Session | undefined>;
   
-  // ProgressMeasurement operations
-  getProgressMeasurement(id: number): Promise<ProgressMeasurement | undefined>;
-  getProgressMeasurementsByPatientId(patientId: number): Promise<ProgressMeasurement[]>;
-  createProgressMeasurement(measurement: InsertProgressMeasurement): Promise<ProgressMeasurement>;
+  // Session Exercise methods
+  getSessionExercises(sessionId: number): Promise<SessionExercise[]>;
+  createSessionExercise(sessionExercise: InsertSessionExercise): Promise<SessionExercise>;
+  completeSessionExercise(id: number, notes?: string): Promise<SessionExercise | undefined>;
   
-  // Alert operations
-  getAlert(id: number): Promise<Alert | undefined>;
-  getAlertsByPatientId(patientId: number): Promise<Alert[]>;
-  getUnresolvedAlerts(): Promise<Alert[]>;
-  createAlert(alert: InsertAlert): Promise<Alert>;
-  updateAlertStatus(id: number, status: string): Promise<Alert | undefined>;
+  // Progress methods
+  getProgressRecords(patientId: number): Promise<ProgressRecord[]>;
+  createProgressRecord(progressRecord: InsertProgressRecord): Promise<ProgressRecord>;
+  
+  // Engagement methods
+  getEngagementMetrics(userId: number): Promise<EngagementMetric[]>;
+  getLatestEngagementMetric(userId: number): Promise<EngagementMetric | undefined>;
+  createEngagementMetric(metric: InsertEngagementMetric): Promise<EngagementMetric>;
+  updateEngagementStreak(userId: number, streak: number): Promise<EngagementMetric | undefined>;
+  
+  // Therapist Notes methods
+  getTherapistNotes(patientId: number): Promise<TherapistNote[]>;
+  createTherapistNote(note: InsertTherapistNote): Promise<TherapistNote>;
+  
+  // Payment methods
+  getPaymentRecords(userId: number): Promise<PaymentRecord[]>;
+  createPaymentRecord(payment: InsertPaymentRecord): Promise<PaymentRecord>;
+  updatePaymentStatus(id: number, status: string, receiptUrl?: string): Promise<PaymentRecord | undefined>;
 }
 
-// In-memory storage implementation
 export class MemStorage implements IStorage {
   private users: Map<number, User>;
-  private patients: Map<number, Patient>;
   private exercises: Map<number, Exercise>;
-  private patientExercises: Map<number, PatientExercise>;
   private sessions: Map<number, Session>;
-  private progressMeasurements: Map<number, ProgressMeasurement>;
-  private alerts: Map<number, Alert>;
+  private sessionExercises: Map<number, SessionExercise>;
+  private progressRecords: Map<number, ProgressRecord>;
+  private engagementMetrics: Map<number, EngagementMetric>;
+  private therapistNotes: Map<number, TherapistNote>;
+  private paymentRecords: Map<number, PaymentRecord>;
   
   private userIdCounter: number;
-  private patientIdCounter: number;
   private exerciseIdCounter: number;
-  private patientExerciseIdCounter: number;
   private sessionIdCounter: number;
-  private progressMeasurementIdCounter: number;
-  private alertIdCounter: number;
-  
+  private sessionExerciseIdCounter: number;
+  private progressRecordIdCounter: number;
+  private engagementMetricIdCounter: number;
+  private therapistNoteIdCounter: number;
+  private paymentRecordIdCounter: number;
+
   constructor() {
     this.users = new Map();
-    this.patients = new Map();
     this.exercises = new Map();
-    this.patientExercises = new Map();
     this.sessions = new Map();
-    this.progressMeasurements = new Map();
-    this.alerts = new Map();
+    this.sessionExercises = new Map();
+    this.progressRecords = new Map();
+    this.engagementMetrics = new Map();
+    this.therapistNotes = new Map();
+    this.paymentRecords = new Map();
     
     this.userIdCounter = 1;
-    this.patientIdCounter = 1;
     this.exerciseIdCounter = 1;
-    this.patientExerciseIdCounter = 1;
     this.sessionIdCounter = 1;
-    this.progressMeasurementIdCounter = 1;
-    this.alertIdCounter = 1;
+    this.sessionExerciseIdCounter = 1;
+    this.progressRecordIdCounter = 1;
+    this.engagementMetricIdCounter = 1;
+    this.therapistNoteIdCounter = 1;
+    this.paymentRecordIdCounter = 1;
     
-    // Initialize with sample data
-    this.initializeSampleData();
+    // Initialize with some default data
+    this.initDemoData();
   }
-  
-  // User operations
+
+  private initDemoData() {
+    // Create demo users
+    const john: InsertUser = {
+      username: "john",
+      password: "password123",
+      fullName: "John Doe",
+      email: "john@example.com",
+      userType: "patient"
+    };
+    
+    const drRachel: InsertUser = {
+      username: "drrachel",
+      password: "password123",
+      fullName: "Dr. Rachel Stevens",
+      email: "rachel@example.com",
+      userType: "therapist"
+    };
+    
+    this.createUser(john);
+    this.createUser(drRachel);
+    
+    // Create some exercises
+    const shoulderExercises = [
+      {
+        name: "Shoulder Flexion",
+        description: "Raising your arm forward and upward",
+        targetArea: "shoulder",
+        difficulty: "medium",
+        sets: 3,
+        reps: 12,
+        imageUrl: "shoulder-flexion.jpg",
+        createdBy: 2
+      },
+      {
+        name: "Shoulder External Rotation",
+        description: "Targets rotator cuff strength",
+        targetArea: "shoulder",
+        difficulty: "medium",
+        sets: 3,
+        reps: 12,
+        imageUrl: "shoulder-rotation.jpg",
+        createdBy: 2
+      },
+      {
+        name: "Scapular Retraction",
+        description: "Improves posture and shoulder stability",
+        targetArea: "shoulder",
+        difficulty: "easy",
+        sets: 2,
+        reps: 15,
+        imageUrl: "scapular-retraction.jpg",
+        createdBy: 2
+      },
+      {
+        name: "Pendulum Exercise",
+        description: "Gentle motion for shoulder mobility",
+        targetArea: "shoulder",
+        difficulty: "easy",
+        sets: 3,
+        reps: 10,
+        imageUrl: "pendulum.jpg",
+        createdBy: 2
+      }
+    ];
+    
+    shoulderExercises.forEach(ex => this.createExercise(ex as InsertExercise));
+    
+    // Create a session
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    
+    const session: InsertSession = {
+      patientId: 1,
+      date: todayStr,
+      startTime: new Date().toISOString(),
+      status: "scheduled",
+      therapistId: 2
+    };
+    
+    const createdSession = this.createSession(session);
+    
+    // Add exercises to the session
+    this.createSessionExercise({
+      sessionId: createdSession.id,
+      exerciseId: 1,
+      sets: 3,
+      reps: 12,
+      completed: false
+    });
+    
+    // Create progress records
+    this.createProgressRecord({
+      patientId: 1,
+      date: todayStr,
+      rangeOfMotion: 142,
+      postureQuality: 72,
+      painLevel: 3,
+      notes: "Improving steadily"
+    });
+    
+    // Create engagement metrics
+    this.createEngagementMetric({
+      userId: 1,
+      date: todayStr,
+      sessionsCompleted: 18,
+      exercisesCompleted: 72,
+      checkInStreak: 4,
+      weeklyScore: 85
+    });
+    
+    // Create therapist notes
+    this.createTherapistNote({
+      therapistId: 2,
+      patientId: 1,
+      date: todayStr,
+      notes: "John has been making excellent progress with his shoulder rehabilitation program. Range of motion has improved significantly in the last two weeks. I've noticed his posture during external rotation exercises needs some refinement. The AI system has been flagging this correctly, and I've added some additional cues to help with proper form.",
+      flags: ["progress on track", "new exercises added", "posture correction needed"]
+    });
+    
+    // Create payment records
+    const month = today.getMonth();
+    const year = today.getFullYear();
+    
+    for (let i = 0; i < 3; i++) {
+      const paymentDate = new Date(year, month - i, 1).toISOString().split('T')[0];
+      this.createPaymentRecord({
+        userId: 1,
+        date: paymentDate,
+        amount: 4999, // $49.99
+        description: "Premium Rehabilitation Plan - Monthly",
+        status: "processed",
+        receiptUrl: `/receipts/invoice_${i+1}.pdf`
+      });
+    }
+  }
+
+  // User methods
   async getUser(id: number): Promise<User | undefined> {
     return this.users.get(id);
   }
-  
+
   async getUserByUsername(username: string): Promise<User | undefined> {
     return Array.from(this.users.values()).find(
-      (user) => user.username === username,
+      (user) => user.username === username
     );
   }
-  
-  async createUser(insertUser: InsertUser): Promise<User> {
+
+  async createUser(user: InsertUser): Promise<User> {
     const id = this.userIdCounter++;
-    const user: User = { ...insertUser, id, createdAt: new Date() };
-    this.users.set(id, user);
-    return user;
+    const newUser: User = { ...user, id, createdAt: new Date().toISOString() };
+    this.users.set(id, newUser);
+    return newUser;
   }
-  
-  // Patient operations
-  async getPatient(id: number): Promise<Patient | undefined> {
-    return this.patients.get(id);
-  }
-  
-  async getPatientByUserId(userId: number): Promise<Patient | undefined> {
-    return Array.from(this.patients.values()).find(
-      (patient) => patient.userId === userId,
-    );
-  }
-  
-  async getPatientsByTherapistId(therapistId: number): Promise<Patient[]> {
-    return Array.from(this.patients.values()).filter(
-      (patient) => patient.therapistId === therapistId,
-    );
-  }
-  
-  async createPatient(insertPatient: InsertPatient): Promise<Patient> {
-    const id = this.patientIdCounter++;
-    const patient: Patient = { 
-      ...insertPatient, 
-      id, 
-      startDate: new Date(),
-      engagementScore: 0,
-    };
-    this.patients.set(id, patient);
-    return patient;
-  }
-  
-  async updatePatientEngagement(id: number, score: number): Promise<Patient | undefined> {
-    const patient = this.patients.get(id);
-    if (!patient) return undefined;
-    
-    const updatedPatient = { 
-      ...patient, 
-      engagementScore: score,
-      lastCheckIn: new Date()
-    };
-    this.patients.set(id, updatedPatient);
-    return updatedPatient;
-  }
-  
-  async updatePatientStatus(id: number, status: string): Promise<Patient | undefined> {
-    const patient = this.patients.get(id);
-    if (!patient) return undefined;
-    
-    const updatedPatient = { ...patient, status };
-    this.patients.set(id, updatedPatient);
-    return updatedPatient;
-  }
-  
-  // Exercise operations
+
+  // Exercise methods
   async getExercise(id: number): Promise<Exercise | undefined> {
     return this.exercises.get(id);
   }
-  
+
   async getAllExercises(): Promise<Exercise[]> {
     return Array.from(this.exercises.values());
   }
-  
-  async getExercisesByBodyPart(bodyPart: string): Promise<Exercise[]> {
+
+  async getExercisesByTargetArea(targetArea: string): Promise<Exercise[]> {
     return Array.from(this.exercises.values()).filter(
-      (exercise) => exercise.bodyPart === bodyPart,
+      (exercise) => exercise.targetArea === targetArea
     );
   }
-  
-  async createExercise(insertExercise: InsertExercise): Promise<Exercise> {
+
+  async createExercise(exercise: InsertExercise): Promise<Exercise> {
     const id = this.exerciseIdCounter++;
-    const exercise: Exercise = { ...insertExercise, id };
-    this.exercises.set(id, exercise);
-    return exercise;
+    const newExercise: Exercise = { ...exercise, id, createdAt: new Date().toISOString() };
+    this.exercises.set(id, newExercise);
+    return newExercise;
   }
-  
-  // PatientExercise operations
-  async getPatientExercise(id: number): Promise<PatientExercise | undefined> {
-    return this.patientExercises.get(id);
-  }
-  
-  async getPatientExercisesByPatientId(patientId: number): Promise<PatientExercise[]> {
-    return Array.from(this.patientExercises.values()).filter(
-      (patientExercise) => patientExercise.patientId === patientId,
-    );
-  }
-  
-  async createPatientExercise(insertPatientExercise: InsertPatientExercise): Promise<PatientExercise> {
-    const id = this.patientExerciseIdCounter++;
-    const patientExercise: PatientExercise = { 
-      ...insertPatientExercise, 
-      id,
-      completed: false,
-      assignedDate: new Date(),
-      performance: 0
-    };
-    this.patientExercises.set(id, patientExercise);
-    return patientExercise;
-  }
-  
-  async updatePatientExerciseCompletion(id: number, performance: number, feedback?: string): Promise<PatientExercise | undefined> {
-    const patientExercise = this.patientExercises.get(id);
-    if (!patientExercise) return undefined;
-    
-    const updatedPatientExercise = { 
-      ...patientExercise, 
-      completed: true,
-      completedDate: new Date(),
-      performance,
-      feedback
-    };
-    this.patientExercises.set(id, updatedPatientExercise);
-    return updatedPatientExercise;
-  }
-  
-  // Session operations
+
+  // Session methods
   async getSession(id: number): Promise<Session | undefined> {
     return this.sessions.get(id);
   }
-  
+
   async getSessionsByPatientId(patientId: number): Promise<Session[]> {
     return Array.from(this.sessions.values()).filter(
-      (session) => session.patientId === patientId,
+      (session) => session.patientId === patientId
     );
   }
-  
-  async getActiveSessionsByTherapistId(therapistId: number): Promise<Session[]> {
-    return Array.from(this.sessions.values()).filter(
-      (session) => session.therapistId === therapistId && session.status === 'active',
-    );
-  }
-  
-  async createSession(insertSession: InsertSession): Promise<Session> {
+
+  async createSession(session: InsertSession): Promise<Session> {
     const id = this.sessionIdCounter++;
-    const session: Session = { 
-      ...insertSession, 
-      id,
-      startTime: insertSession.startTime || new Date()
-    };
-    this.sessions.set(id, session);
-    return session;
+    const newSession: Session = { ...session, id };
+    this.sessions.set(id, newSession);
+    return newSession;
   }
-  
-  async updateSessionStatus(id: number, status: string, endTime?: Date): Promise<Session | undefined> {
+
+  async updateSessionStatus(id: number, status: string): Promise<Session | undefined> {
     const session = this.sessions.get(id);
     if (!session) return undefined;
     
-    const updatedSession = { 
-      ...session, 
+    const updatedSession: Session = { ...session, status };
+    this.sessions.set(id, updatedSession);
+    return updatedSession;
+  }
+
+  // Session Exercise methods
+  async getSessionExercises(sessionId: number): Promise<SessionExercise[]> {
+    return Array.from(this.sessionExercises.values()).filter(
+      (se) => se.sessionId === sessionId
+    );
+  }
+
+  async createSessionExercise(sessionExercise: InsertSessionExercise): Promise<SessionExercise> {
+    const id = this.sessionExerciseIdCounter++;
+    const newSessionExercise: SessionExercise = { ...sessionExercise, id };
+    this.sessionExercises.set(id, newSessionExercise);
+    return newSessionExercise;
+  }
+
+  async completeSessionExercise(id: number, notes?: string): Promise<SessionExercise | undefined> {
+    const sessionExercise = this.sessionExercises.get(id);
+    if (!sessionExercise) return undefined;
+    
+    const updatedExercise: SessionExercise = { 
+      ...sessionExercise, 
+      completed: true,
+      notes: notes || sessionExercise.notes
+    };
+    
+    this.sessionExercises.set(id, updatedExercise);
+    return updatedExercise;
+  }
+
+  // Progress methods
+  async getProgressRecords(patientId: number): Promise<ProgressRecord[]> {
+    return Array.from(this.progressRecords.values())
+      .filter((record) => record.patientId === patientId)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }
+
+  async createProgressRecord(progressRecord: InsertProgressRecord): Promise<ProgressRecord> {
+    const id = this.progressRecordIdCounter++;
+    const newRecord: ProgressRecord = { ...progressRecord, id };
+    this.progressRecords.set(id, newRecord);
+    return newRecord;
+  }
+
+  // Engagement methods
+  async getEngagementMetrics(userId: number): Promise<EngagementMetric[]> {
+    return Array.from(this.engagementMetrics.values())
+      .filter((metric) => metric.userId === userId)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }
+
+  async getLatestEngagementMetric(userId: number): Promise<EngagementMetric | undefined> {
+    const metrics = await this.getEngagementMetrics(userId);
+    return metrics.length > 0 ? metrics[0] : undefined;
+  }
+
+  async createEngagementMetric(metric: InsertEngagementMetric): Promise<EngagementMetric> {
+    const id = this.engagementMetricIdCounter++;
+    const newMetric: EngagementMetric = { ...metric, id };
+    this.engagementMetrics.set(id, newMetric);
+    return newMetric;
+  }
+
+  async updateEngagementStreak(userId: number, streak: number): Promise<EngagementMetric | undefined> {
+    const latest = await this.getLatestEngagementMetric(userId);
+    if (!latest) return undefined;
+    
+    const updated: EngagementMetric = { ...latest, checkInStreak: streak };
+    this.engagementMetrics.set(latest.id, updated);
+    return updated;
+  }
+
+  // Therapist Notes methods
+  async getTherapistNotes(patientId: number): Promise<TherapistNote[]> {
+    return Array.from(this.therapistNotes.values())
+      .filter((note) => note.patientId === patientId)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }
+
+  async createTherapistNote(note: InsertTherapistNote): Promise<TherapistNote> {
+    const id = this.therapistNoteIdCounter++;
+    const newNote: TherapistNote = { ...note, id };
+    this.therapistNotes.set(id, newNote);
+    return newNote;
+  }
+
+  // Payment methods
+  async getPaymentRecords(userId: number): Promise<PaymentRecord[]> {
+    return Array.from(this.paymentRecords.values())
+      .filter((payment) => payment.userId === userId)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }
+
+  async createPaymentRecord(payment: InsertPaymentRecord): Promise<PaymentRecord> {
+    const id = this.paymentRecordIdCounter++;
+    const newPayment: PaymentRecord = { ...payment, id };
+    this.paymentRecords.set(id, newPayment);
+    return newPayment;
+  }
+
+  async updatePaymentStatus(id: number, status: string, receiptUrl?: string): Promise<PaymentRecord | undefined> {
+    const payment = this.paymentRecords.get(id);
+    if (!payment) return undefined;
+    
+    const updatedPayment: PaymentRecord = { 
+      ...payment, 
       status,
-      endTime: endTime || (status === 'completed' ? new Date() : session.endTime)
+      receiptUrl: receiptUrl || payment.receiptUrl
     };
-    this.sessions.set(id, updatedSession);
-    return updatedSession;
-  }
-  
-  async updateSessionData(id: number, postureQuality?: number, rangeOfMotion?: any, painLevel?: number, notes?: string): Promise<Session | undefined> {
-    const session = this.sessions.get(id);
-    if (!session) return undefined;
     
-    const updatedSession = { 
-      ...session,
-      postureQuality: postureQuality !== undefined ? postureQuality : session.postureQuality,
-      rangeOfMotion: rangeOfMotion !== undefined ? rangeOfMotion : session.rangeOfMotion,
-      painLevel: painLevel !== undefined ? painLevel : session.painLevel,
-      notes: notes !== undefined ? notes : session.notes
-    };
-    this.sessions.set(id, updatedSession);
-    return updatedSession;
-  }
-  
-  // ProgressMeasurement operations
-  async getProgressMeasurement(id: number): Promise<ProgressMeasurement | undefined> {
-    return this.progressMeasurements.get(id);
-  }
-  
-  async getProgressMeasurementsByPatientId(patientId: number): Promise<ProgressMeasurement[]> {
-    return Array.from(this.progressMeasurements.values()).filter(
-      (measurement) => measurement.patientId === patientId,
-    );
-  }
-  
-  async createProgressMeasurement(insertMeasurement: InsertProgressMeasurement): Promise<ProgressMeasurement> {
-    const id = this.progressMeasurementIdCounter++;
-    const measurement: ProgressMeasurement = { 
-      ...insertMeasurement, 
-      id,
-      date: new Date()
-    };
-    this.progressMeasurements.set(id, measurement);
-    return measurement;
-  }
-  
-  // Alert operations
-  async getAlert(id: number): Promise<Alert | undefined> {
-    return this.alerts.get(id);
-  }
-  
-  async getAlertsByPatientId(patientId: number): Promise<Alert[]> {
-    return Array.from(this.alerts.values()).filter(
-      (alert) => alert.patientId === patientId,
-    );
-  }
-  
-  async getUnresolvedAlerts(): Promise<Alert[]> {
-    return Array.from(this.alerts.values()).filter(
-      (alert) => alert.status !== 'resolved',
-    );
-  }
-  
-  async createAlert(insertAlert: InsertAlert): Promise<Alert> {
-    const id = this.alertIdCounter++;
-    const alert: Alert = { 
-      ...insertAlert, 
-      id,
-      date: new Date(),
-      status: 'unread'
-    };
-    this.alerts.set(id, alert);
-    return alert;
-  }
-  
-  async updateAlertStatus(id: number, status: string): Promise<Alert | undefined> {
-    const alert = this.alerts.get(id);
-    if (!alert) return undefined;
-    
-    const updatedAlert = { ...alert, status };
-    this.alerts.set(id, updatedAlert);
-    return updatedAlert;
-  }
-  
-  // Initialize sample data for demo purposes
-  private initializeSampleData() {
-    // Create sample therapist
-    const therapist: User = {
-      id: this.userIdCounter++,
-      username: 'drsarah',
-      password: 'password123',
-      fullName: 'Dr. Sarah Reynolds',
-      role: 'therapist',
-      createdAt: new Date(),
-    };
-    this.users.set(therapist.id, therapist);
-    
-    // Create sample patient
-    const patient: User = {
-      id: this.userIdCounter++,
-      username: 'johndoe',
-      password: 'password123',
-      fullName: 'John Doe',
-      role: 'patient',
-      createdAt: new Date(),
-    };
-    this.users.set(patient.id, patient);
-    
-    // Create patient record
-    const patientRecord: Patient = {
-      id: this.patientIdCounter++,
-      userId: patient.id,
-      condition: 'Shoulder Rehabilitation',
-      injury: 'Rotator Cuff Tear',
-      startDate: new Date(Date.now() - 28 * 24 * 60 * 60 * 1000), // 4 weeks ago
-      targetEndDate: new Date(Date.now() + 56 * 24 * 60 * 60 * 1000), // 8 weeks from now
-      status: 'active',
-      therapistId: therapist.id,
-      engagementScore: 85,
-      lastCheckIn: new Date(Date.now() - 24 * 60 * 60 * 1000), // 1 day ago
-    };
-    this.patients.set(patientRecord.id, patientRecord);
-    
-    // Create sample exercises
-    const exercises: Exercise[] = [
-      {
-        id: this.exerciseIdCounter++,
-        name: 'External Rotation with Band',
-        description: 'Targets rotator cuff muscles to improve shoulder stability',
-        difficulty: 'intermediate',
-        bodyPart: 'shoulder',
-        instructions: 'Stand with elbow at side, bent to 90 degrees. Hold resistance band and rotate arm outward, keeping elbow at side. Return slowly to start position.',
-        imageUrl: 'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60',
-        createdBy: therapist.id,
-      },
-      {
-        id: this.exerciseIdCounter++,
-        name: 'Wall Slides',
-        description: 'Improves shoulder mobility and posture',
-        difficulty: 'beginner',
-        bodyPart: 'shoulder',
-        instructions: 'Stand with back against wall, elbows and wrists touching wall. Slide arms up the wall while maintaining contact, then return to starting position.',
-        imageUrl: 'https://images.unsplash.com/photo-1576678927484-cc907957088c?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60',
-        createdBy: therapist.id,
-      },
-      {
-        id: this.exerciseIdCounter++,
-        name: 'Prone Scapular Retraction',
-        description: 'Strengthens middle back muscles to improve posture',
-        difficulty: 'intermediate',
-        bodyPart: 'shoulder',
-        instructions: 'Lie on stomach with arms at sides, thumbs up. Lift arms by squeezing shoulder blades together. Hold briefly, then lower slowly.',
-        imageUrl: 'https://images.unsplash.com/photo-1594737625785-a6cbdabd333c?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60',
-        createdBy: therapist.id,
-      },
-      {
-        id: this.exerciseIdCounter++,
-        name: 'Internal Rotation Stretch',
-        description: 'Increases range of motion for internal shoulder rotation',
-        difficulty: 'beginner',
-        bodyPart: 'shoulder',
-        instructions: 'Place hand behind lower back. Use other hand to gently pull elbow forward. Feel stretch in shoulder, hold for 30 seconds.',
-        imageUrl: 'https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60',
-        createdBy: therapist.id,
-      },
-    ];
-    
-    exercises.forEach(exercise => {
-      this.exercises.set(exercise.id, exercise);
-    });
-    
-    // Create patient exercises
-    const patientExercises: PatientExercise[] = [
-      {
-        id: this.patientExerciseIdCounter++,
-        patientId: patientRecord.id,
-        exerciseId: 1, // External Rotation
-        sets: 3,
-        reps: 12,
-        assigned: true,
-        completed: true,
-        assignedDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 1 week ago
-        completedDate: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000), // 6 days ago
-        performance: 70,
-        feedback: 'Good effort, but work on keeping elbow against body',
-      },
-      {
-        id: this.patientExerciseIdCounter++,
-        patientId: patientRecord.id,
-        exerciseId: 2, // Wall Slides
-        sets: 3,
-        reps: 10,
-        assigned: true,
-        completed: true,
-        assignedDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 1 week ago
-        completedDate: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000), // 6 days ago
-        performance: 85,
-        feedback: 'Excellent form, maintain contact with wall',
-      },
-      {
-        id: this.patientExerciseIdCounter++,
-        patientId: patientRecord.id,
-        exerciseId: 3, // Prone Scapular Retraction
-        sets: 3,
-        reps: 15,
-        assigned: true,
-        completed: false,
-        assignedDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 days ago
-      },
-      {
-        id: this.patientExerciseIdCounter++,
-        patientId: patientRecord.id,
-        exerciseId: 4, // Internal Rotation Stretch
-        sets: 3,
-        reps: 1,
-        durationSeconds: 30,
-        assigned: true,
-        completed: false,
-        assignedDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 days ago
-      },
-    ];
-    
-    patientExercises.forEach(patientExercise => {
-      this.patientExercises.set(patientExercise.id, patientExercise);
-    });
-    
-    // Create active session
-    const activeSession: Session = {
-      id: this.sessionIdCounter++,
-      patientId: patientRecord.id,
-      therapistId: therapist.id,
-      startTime: new Date(),
-      status: 'active',
-      notes: 'Focus on shoulder external rotation',
-    };
-    this.sessions.set(activeSession.id, activeSession);
-    
-    // Create progress measurements
-    const progressMeasurements: ProgressMeasurement[] = [
-      {
-        id: this.progressMeasurementIdCounter++,
-        patientId: patientRecord.id,
-        date: new Date(Date.now() - 28 * 24 * 60 * 60 * 1000), // 4 weeks ago
-        rangeOfMotion: { flexion: 90, extension: 20, abduction: 85, externalRotation: 30, internalRotation: 40 },
-        postureQuality: 60,
-        strength: 50,
-        painLevel: 7,
-        notes: 'Initial assessment',
-      },
-      {
-        id: this.progressMeasurementIdCounter++,
-        patientId: patientRecord.id,
-        date: new Date(Date.now() - 21 * 24 * 60 * 60 * 1000), // 3 weeks ago
-        rangeOfMotion: { flexion: 100, extension: 25, abduction: 95, externalRotation: 35, internalRotation: 45 },
-        postureQuality: 65,
-        strength: 55,
-        painLevel: 6,
-        notes: 'Showing improvement',
-      },
-      {
-        id: this.progressMeasurementIdCounter++,
-        patientId: patientRecord.id,
-        date: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000), // 2 weeks ago
-        rangeOfMotion: { flexion: 110, extension: 30, abduction: 105, externalRotation: 40, internalRotation: 50 },
-        postureQuality: 70,
-        strength: 60,
-        painLevel: 5,
-        notes: 'Good progress on ROM',
-      },
-      {
-        id: this.progressMeasurementIdCounter++,
-        patientId: patientRecord.id,
-        date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 1 week ago
-        rangeOfMotion: { flexion: 120, extension: 35, abduction: 115, externalRotation: 45, internalRotation: 55 },
-        postureQuality: 75,
-        strength: 65,
-        painLevel: 4,
-        notes: 'Continued improvement',
-      },
-    ];
-    
-    progressMeasurements.forEach(measurement => {
-      this.progressMeasurements.set(measurement.id, measurement);
-    });
-    
-    // Create alerts
-    const alerts: Alert[] = [
-      {
-        id: this.alertIdCounter++,
-        patientId: patientRecord.id,
-        type: 'missed_session',
-        message: 'Missed scheduled session on Monday',
-        date: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 days ago
-        status: 'unread',
-        priority: 'high',
-      },
-      {
-        id: this.alertIdCounter++,
-        patientId: patientRecord.id,
-        type: 'form_correction',
-        message: 'External rotation exercise form needs correction',
-        date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago
-        status: 'unread',
-        priority: 'medium',
-      },
-      {
-        id: this.alertIdCounter++,
-        patientId: patientRecord.id,
-        type: 'progress_milestone',
-        message: 'Achieved 120° shoulder flexion',
-        date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 1 week ago
-        status: 'read',
-        priority: 'low',
-      },
-    ];
-    
-    alerts.forEach(alert => {
-      this.alerts.set(alert.id, alert);
-    });
+    this.paymentRecords.set(id, updatedPayment);
+    return updatedPayment;
   }
 }
 
-// Export singleton storage instance
+export class DatabaseStorage implements IStorage {
+  // User methods
+  async getUser(id: number): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user || undefined;
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user || undefined;
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const [user] = await db
+      .insert(users)
+      .values(insertUser)
+      .returning();
+    return user;
+  }
+
+  // Exercise methods
+  async getExercise(id: number): Promise<Exercise | undefined> {
+    const [exercise] = await db.select().from(exercises).where(eq(exercises.id, id));
+    return exercise || undefined;
+  }
+
+  async getAllExercises(): Promise<Exercise[]> {
+    return db.select().from(exercises);
+  }
+
+  async getExercisesByTargetArea(targetArea: string): Promise<Exercise[]> {
+    return db.select().from(exercises).where(eq(exercises.targetArea, targetArea));
+  }
+
+  async createExercise(exercise: InsertExercise): Promise<Exercise> {
+    const [newExercise] = await db
+      .insert(exercises)
+      .values(exercise)
+      .returning();
+    return newExercise;
+  }
+
+  // Session methods
+  async getSession(id: number): Promise<Session | undefined> {
+    const [session] = await db.select().from(sessions).where(eq(sessions.id, id));
+    return session || undefined;
+  }
+
+  async getSessionsByPatientId(patientId: number): Promise<Session[]> {
+    return db.select().from(sessions).where(eq(sessions.patientId, patientId));
+  }
+
+  async createSession(session: InsertSession): Promise<Session> {
+    const [newSession] = await db
+      .insert(sessions)
+      .values(session)
+      .returning();
+    return newSession;
+  }
+
+  async updateSessionStatus(id: number, status: string): Promise<Session | undefined> {
+    const [updatedSession] = await db
+      .update(sessions)
+      .set({ status })
+      .where(eq(sessions.id, id))
+      .returning();
+    return updatedSession || undefined;
+  }
+
+  // Session Exercise methods
+  async getSessionExercises(sessionId: number): Promise<SessionExercise[]> {
+    return db
+      .select()
+      .from(sessionExercises)
+      .where(eq(sessionExercises.sessionId, sessionId));
+  }
+
+  async createSessionExercise(sessionExercise: InsertSessionExercise): Promise<SessionExercise> {
+    const [newSessionExercise] = await db
+      .insert(sessionExercises)
+      .values(sessionExercise)
+      .returning();
+    return newSessionExercise;
+  }
+
+  async completeSessionExercise(id: number, notes?: string): Promise<SessionExercise | undefined> {
+    const updateData: Partial<SessionExercise> = { completed: true };
+    if (notes) {
+      updateData.notes = notes;
+    }
+
+    const [updatedExercise] = await db
+      .update(sessionExercises)
+      .set(updateData)
+      .where(eq(sessionExercises.id, id))
+      .returning();
+    return updatedExercise || undefined;
+  }
+
+  // Progress methods
+  async getProgressRecords(patientId: number): Promise<ProgressRecord[]> {
+    return db
+      .select()
+      .from(progressRecords)
+      .where(eq(progressRecords.patientId, patientId))
+      .orderBy(desc(progressRecords.date));
+  }
+
+  async createProgressRecord(progressRecord: InsertProgressRecord): Promise<ProgressRecord> {
+    const [newRecord] = await db
+      .insert(progressRecords)
+      .values(progressRecord)
+      .returning();
+    return newRecord;
+  }
+
+  // Engagement methods
+  async getEngagementMetrics(userId: number): Promise<EngagementMetric[]> {
+    return db
+      .select()
+      .from(engagementMetrics)
+      .where(eq(engagementMetrics.userId, userId))
+      .orderBy(desc(engagementMetrics.date));
+  }
+
+  async getLatestEngagementMetric(userId: number): Promise<EngagementMetric | undefined> {
+    const [metric] = await db
+      .select()
+      .from(engagementMetrics)
+      .where(eq(engagementMetrics.userId, userId))
+      .orderBy(desc(engagementMetrics.date))
+      .limit(1);
+    return metric || undefined;
+  }
+
+  async createEngagementMetric(metric: InsertEngagementMetric): Promise<EngagementMetric> {
+    const [newMetric] = await db
+      .insert(engagementMetrics)
+      .values(metric)
+      .returning();
+    return newMetric;
+  }
+
+  async updateEngagementStreak(userId: number, streak: number): Promise<EngagementMetric | undefined> {
+    const latestMetric = await this.getLatestEngagementMetric(userId);
+    if (!latestMetric) return undefined;
+
+    const [updatedMetric] = await db
+      .update(engagementMetrics)
+      .set({ checkInStreak: streak })
+      .where(eq(engagementMetrics.id, latestMetric.id))
+      .returning();
+    return updatedMetric || undefined;
+  }
+
+  // Therapist Notes methods
+  async getTherapistNotes(patientId: number): Promise<TherapistNote[]> {
+    return db
+      .select()
+      .from(therapistNotes)
+      .where(eq(therapistNotes.patientId, patientId))
+      .orderBy(desc(therapistNotes.date));
+  }
+
+  async createTherapistNote(note: InsertTherapistNote): Promise<TherapistNote> {
+    const [newNote] = await db
+      .insert(therapistNotes)
+      .values(note)
+      .returning();
+    return newNote;
+  }
+
+  // Payment methods
+  async getPaymentRecords(userId: number): Promise<PaymentRecord[]> {
+    return db
+      .select()
+      .from(paymentRecords)
+      .where(eq(paymentRecords.userId, userId))
+      .orderBy(desc(paymentRecords.date));
+  }
+
+  async createPaymentRecord(payment: InsertPaymentRecord): Promise<PaymentRecord> {
+    const [newPayment] = await db
+      .insert(paymentRecords)
+      .values(payment)
+      .returning();
+    return newPayment;
+  }
+
+  async updatePaymentStatus(id: number, status: string, receiptUrl?: string): Promise<PaymentRecord | undefined> {
+    const updateData: Partial<PaymentRecord> = { status };
+    if (receiptUrl) {
+      updateData.receiptUrl = receiptUrl;
+    }
+
+    const [updatedPayment] = await db
+      .update(paymentRecords)
+      .set(updateData)
+      .where(eq(paymentRecords.id, id))
+      .returning();
+    return updatedPayment || undefined;
+  }
+}
+
+// Initialize with demo data if no production database is configured
+const initializeDatabase = async () => {
+  try {
+    // Check if users table has data
+    const userCount = await db.select({ count: count() }).from(users);
+    
+    if (userCount[0].count === 0) {
+      // Add demo users
+      const john: InsertUser = {
+        username: "john",
+        password: "password123",
+        fullName: "John Doe",
+        email: "john@example.com",
+        userType: "patient"
+      };
+      
+      const drRachel: InsertUser = {
+        username: "drrachel",
+        password: "password123",
+        fullName: "Dr. Rachel Stevens",
+        email: "rachel@example.com",
+        userType: "therapist"
+      };
+      
+      await db.insert(users).values([john, drRachel]);
+      
+      // Add demo exercises
+      const shoulderExercises = [
+        {
+          name: "Shoulder Flexion",
+          description: "Raising your arm forward and upward",
+          targetArea: "shoulder",
+          difficulty: "medium",
+          sets: 3,
+          reps: 12,
+          imageUrl: "shoulder-flexion.jpg",
+          createdBy: 2
+        },
+        {
+          name: "Shoulder External Rotation",
+          description: "Targets rotator cuff strength",
+          targetArea: "shoulder",
+          difficulty: "medium",
+          sets: 3,
+          reps: 12,
+          imageUrl: "shoulder-rotation.jpg",
+          createdBy: 2
+        },
+        {
+          name: "Scapular Retraction",
+          description: "Improves posture and shoulder stability",
+          targetArea: "shoulder",
+          difficulty: "easy",
+          sets: 2,
+          reps: 15,
+          imageUrl: "scapular-retraction.jpg",
+          createdBy: 2
+        },
+        {
+          name: "Pendulum Exercise",
+          description: "Gentle motion for shoulder mobility",
+          targetArea: "shoulder",
+          difficulty: "easy",
+          sets: 3,
+          reps: 10,
+          imageUrl: "pendulum.jpg",
+          createdBy: 2
+        }
+      ];
+      
+      await db.insert(exercises).values(shoulderExercises);
+      
+      // Create a session
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
+      
+      const [session] = await db.insert(sessions).values({
+        patientId: 1,
+        date: todayStr,
+        startTime: new Date().toISOString(),
+        status: "scheduled",
+        therapistId: 2
+      }).returning();
+      
+      // Add exercises to the session
+      await db.insert(sessionExercises).values({
+        sessionId: session.id,
+        exerciseId: 1,
+        sets: 3,
+        reps: 12,
+        completed: false
+      });
+      
+      // Create progress records
+      await db.insert(progressRecords).values({
+        patientId: 1,
+        date: todayStr,
+        rangeOfMotion: 142,
+        postureQuality: 72,
+        painLevel: 3,
+        notes: "Improving steadily"
+      });
+      
+      // Create engagement metrics
+      await db.insert(engagementMetrics).values({
+        userId: 1,
+        date: todayStr,
+        sessionsCompleted: 18,
+        exercisesCompleted: 72,
+        checkInStreak: 4,
+        weeklyScore: 85
+      });
+      
+      // Create therapist notes
+      await db.insert(therapistNotes).values({
+        therapistId: 2,
+        patientId: 1,
+        date: todayStr,
+        notes: "John has been making excellent progress with his shoulder rehabilitation program. Range of motion has improved significantly in the last two weeks. I've noticed his posture during external rotation exercises needs some refinement. The AI system has been flagging this correctly, and I've added some additional cues to help with proper form.",
+        flags: ["progress on track", "new exercises added", "posture correction needed"]
+      });
+      
+      // Create payment records
+      const month = today.getMonth();
+      const year = today.getFullYear();
+      
+      const payments = [];
+      for (let i = 0; i < 3; i++) {
+        const paymentDate = new Date(year, month - i, 1).toISOString().split('T')[0];
+        payments.push({
+          userId: 1,
+          date: paymentDate,
+          amount: 4999, // $49.99
+          description: "Premium Rehabilitation Plan - Monthly",
+          status: "processed",
+          receiptUrl: `/receipts/invoice_${i+1}.pdf`
+        });
+      }
+      
+      await db.insert(paymentRecords).values(payments);
+    }
+  } catch (error) {
+    console.error("Error initializing database:", error);
+  }
+};
+
+// Skip database initialization due to connection issues
+// initializeDatabase().catch(console.error);
+
+// Use in-memory storage instead due to database connection issues
+console.log("Using in-memory storage due to database connection issues");
 export const storage = new MemStorage();

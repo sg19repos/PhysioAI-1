@@ -1,438 +1,331 @@
-import express, { type Express, Request, Response } from "express";
+import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { 
-  insertUserSchema, 
-  insertPatientSchema, 
-  insertExerciseSchema,
-  insertPatientExerciseSchema,
-  insertSessionSchema,
-  insertProgressMeasurementSchema,
-  insertAlertSchema
+  insertUserSchema, insertExerciseSchema, insertSessionSchema, 
+  insertSessionExerciseSchema, insertProgressRecordSchema,
+  insertEngagementMetricSchema, insertTherapistNoteSchema, insertPaymentRecordSchema
 } from "@shared/schema";
-import { ZodError } from "zod";
+import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // API routes prefix
-  const apiRouter = express.Router();
+  // API routes - all prefixed with /api
   
-  // Error handling middleware
-  const handleError = (err: any, res: Response) => {
-    console.error(err);
-    if (err instanceof ZodError) {
-      return res.status(400).json({ 
-        message: "Validation error", 
-        errors: err.errors 
-      });
+  // User routes
+  app.get("/api/users/:id", async (req, res) => {
+    const userId = parseInt(req.params.id);
+    if (isNaN(userId)) {
+      return res.status(400).json({ message: "Invalid user ID" });
     }
-    return res.status(500).json({ message: err.message || "Internal server error" });
-  };
-
-  // Users endpoints
-  apiRouter.post("/users", async (req: Request, res: Response) => {
+    
+    const user = await storage.getUser(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    // Remove password from response
+    const { password, ...userWithoutPassword } = user;
+    res.json(userWithoutPassword);
+  });
+  
+  app.post("/api/users", async (req, res) => {
     try {
       const userData = insertUserSchema.parse(req.body);
-      const existingUser = await storage.getUserByUsername(userData.username);
-      
-      if (existingUser) {
-        return res.status(409).json({ message: "Username already exists" });
-      }
-      
       const user = await storage.createUser(userData);
-      res.status(201).json(user);
-    } catch (err) {
-      handleError(err, res);
-    }
-  });
-  
-  apiRouter.get("/users/:id", async (req: Request, res: Response) => {
-    try {
-      const userId = parseInt(req.params.id);
-      const user = await storage.getUser(userId);
       
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
+      // Remove password from response
+      const { password, ...userWithoutPassword } = user;
+      res.status(201).json(userWithoutPassword);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors });
       }
-      
-      res.json(user);
-    } catch (err) {
-      handleError(err, res);
+      res.status(500).json({ message: "Failed to create user" });
     }
   });
   
-  // Patients endpoints
-  apiRouter.post("/patients", async (req: Request, res: Response) => {
-    try {
-      const patientData = insertPatientSchema.parse(req.body);
-      const patient = await storage.createPatient(patientData);
-      res.status(201).json(patient);
-    } catch (err) {
-      handleError(err, res);
-    }
+  // Exercise routes
+  app.get("/api/exercises", async (req, res) => {
+    const targetArea = req.query.targetArea as string | undefined;
+    
+    const exercises = targetArea 
+      ? await storage.getExercisesByTargetArea(targetArea)
+      : await storage.getAllExercises();
+      
+    res.json(exercises);
   });
   
-  apiRouter.get("/patients/:id", async (req: Request, res: Response) => {
-    try {
-      const patientId = parseInt(req.params.id);
-      const patient = await storage.getPatient(patientId);
-      
-      if (!patient) {
-        return res.status(404).json({ message: "Patient not found" });
-      }
-      
-      res.json(patient);
-    } catch (err) {
-      handleError(err, res);
+  app.get("/api/exercises/:id", async (req, res) => {
+    const exerciseId = parseInt(req.params.id);
+    if (isNaN(exerciseId)) {
+      return res.status(400).json({ message: "Invalid exercise ID" });
     }
+    
+    const exercise = await storage.getExercise(exerciseId);
+    if (!exercise) {
+      return res.status(404).json({ message: "Exercise not found" });
+    }
+    
+    res.json(exercise);
   });
   
-  apiRouter.get("/therapists/:id/patients", async (req: Request, res: Response) => {
-    try {
-      const therapistId = parseInt(req.params.id);
-      const patients = await storage.getPatientsByTherapistId(therapistId);
-      res.json(patients);
-    } catch (err) {
-      handleError(err, res);
-    }
-  });
-  
-  apiRouter.patch("/patients/:id/engagement", async (req: Request, res: Response) => {
-    try {
-      const patientId = parseInt(req.params.id);
-      const { score } = req.body;
-      
-      if (typeof score !== 'number' || score < 0 || score > 100) {
-        return res.status(400).json({ message: "Score must be a number between 0 and 100" });
-      }
-      
-      const patient = await storage.updatePatientEngagement(patientId, score);
-      
-      if (!patient) {
-        return res.status(404).json({ message: "Patient not found" });
-      }
-      
-      res.json(patient);
-    } catch (err) {
-      handleError(err, res);
-    }
-  });
-  
-  // Exercises endpoints
-  apiRouter.get("/exercises", async (_req: Request, res: Response) => {
-    try {
-      const exercises = await storage.getAllExercises();
-      res.json(exercises);
-    } catch (err) {
-      handleError(err, res);
-    }
-  });
-  
-  apiRouter.get("/exercises/:id", async (req: Request, res: Response) => {
-    try {
-      const exerciseId = parseInt(req.params.id);
-      const exercise = await storage.getExercise(exerciseId);
-      
-      if (!exercise) {
-        return res.status(404).json({ message: "Exercise not found" });
-      }
-      
-      res.json(exercise);
-    } catch (err) {
-      handleError(err, res);
-    }
-  });
-  
-  apiRouter.post("/exercises", async (req: Request, res: Response) => {
+  app.post("/api/exercises", async (req, res) => {
     try {
       const exerciseData = insertExerciseSchema.parse(req.body);
       const exercise = await storage.createExercise(exerciseData);
       res.status(201).json(exercise);
     } catch (err) {
-      handleError(err, res);
-    }
-  });
-  
-  apiRouter.get("/exercises/body-part/:bodyPart", async (req: Request, res: Response) => {
-    try {
-      const { bodyPart } = req.params;
-      const exercises = await storage.getExercisesByBodyPart(bodyPart);
-      res.json(exercises);
-    } catch (err) {
-      handleError(err, res);
-    }
-  });
-  
-  // Patient Exercises endpoints
-  apiRouter.get("/patients/:id/exercises", async (req: Request, res: Response) => {
-    try {
-      const patientId = parseInt(req.params.id);
-      const patientExercises = await storage.getPatientExercisesByPatientId(patientId);
-      res.json(patientExercises);
-    } catch (err) {
-      handleError(err, res);
-    }
-  });
-  
-  apiRouter.post("/patient-exercises", async (req: Request, res: Response) => {
-    try {
-      const patientExerciseData = insertPatientExerciseSchema.parse(req.body);
-      const patientExercise = await storage.createPatientExercise(patientExerciseData);
-      res.status(201).json(patientExercise);
-    } catch (err) {
-      handleError(err, res);
-    }
-  });
-  
-  apiRouter.patch("/patient-exercises/:id/complete", async (req: Request, res: Response) => {
-    try {
-      const patientExerciseId = parseInt(req.params.id);
-      const { performance, feedback } = req.body;
-      
-      if (typeof performance !== 'number' || performance < 0 || performance > 100) {
-        return res.status(400).json({ message: "Performance must be a number between 0 and 100" });
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors });
       }
-      
-      const patientExercise = await storage.updatePatientExerciseCompletion(
-        patientExerciseId, 
-        performance, 
-        feedback
-      );
-      
-      if (!patientExercise) {
-        return res.status(404).json({ message: "Patient exercise not found" });
-      }
-      
-      res.json(patientExercise);
-    } catch (err) {
-      handleError(err, res);
+      res.status(500).json({ message: "Failed to create exercise" });
     }
   });
   
-  // Sessions endpoints
-  apiRouter.get("/patients/:id/sessions", async (req: Request, res: Response) => {
-    try {
-      const patientId = parseInt(req.params.id);
-      const sessions = await storage.getSessionsByPatientId(patientId);
-      res.json(sessions);
-    } catch (err) {
-      handleError(err, res);
+  // Session routes
+  app.get("/api/sessions/patient/:patientId", async (req, res) => {
+    const patientId = parseInt(req.params.patientId);
+    if (isNaN(patientId)) {
+      return res.status(400).json({ message: "Invalid patient ID" });
     }
+    
+    const sessions = await storage.getSessionsByPatientId(patientId);
+    res.json(sessions);
   });
   
-  apiRouter.get("/therapists/:id/active-sessions", async (req: Request, res: Response) => {
-    try {
-      const therapistId = parseInt(req.params.id);
-      const sessions = await storage.getActiveSessionsByTherapistId(therapistId);
-      res.json(sessions);
-    } catch (err) {
-      handleError(err, res);
+  app.get("/api/sessions/:id", async (req, res) => {
+    const sessionId = parseInt(req.params.id);
+    if (isNaN(sessionId)) {
+      return res.status(400).json({ message: "Invalid session ID" });
     }
+    
+    const session = await storage.getSession(sessionId);
+    if (!session) {
+      return res.status(404).json({ message: "Session not found" });
+    }
+    
+    res.json(session);
   });
   
-  apiRouter.post("/sessions", async (req: Request, res: Response) => {
+  app.post("/api/sessions", async (req, res) => {
     try {
       const sessionData = insertSessionSchema.parse(req.body);
       const session = await storage.createSession(sessionData);
       res.status(201).json(session);
     } catch (err) {
-      handleError(err, res);
-    }
-  });
-  
-  apiRouter.patch("/sessions/:id/status", async (req: Request, res: Response) => {
-    try {
-      const sessionId = parseInt(req.params.id);
-      const { status, endTime } = req.body;
-      
-      if (!['scheduled', 'active', 'completed', 'cancelled'].includes(status)) {
-        return res.status(400).json({ message: "Invalid status" });
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors });
       }
-      
-      const session = await storage.updateSessionStatus(
-        sessionId, 
-        status, 
-        endTime ? new Date(endTime) : undefined
-      );
-      
-      if (!session) {
-        return res.status(404).json({ message: "Session not found" });
+      res.status(500).json({ message: "Failed to create session" });
+    }
+  });
+  
+  app.patch("/api/sessions/:id/status", async (req, res) => {
+    const sessionId = parseInt(req.params.id);
+    if (isNaN(sessionId)) {
+      return res.status(400).json({ message: "Invalid session ID" });
+    }
+    
+    const { status } = req.body;
+    if (!status || !["scheduled", "completed", "missed"].includes(status)) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
+    
+    const updatedSession = await storage.updateSessionStatus(sessionId, status);
+    if (!updatedSession) {
+      return res.status(404).json({ message: "Session not found" });
+    }
+    
+    res.json(updatedSession);
+  });
+  
+  // Session Exercises routes
+  app.get("/api/session-exercises/:sessionId", async (req, res) => {
+    const sessionId = parseInt(req.params.sessionId);
+    if (isNaN(sessionId)) {
+      return res.status(400).json({ message: "Invalid session ID" });
+    }
+    
+    const exercises = await storage.getSessionExercises(sessionId);
+    res.json(exercises);
+  });
+  
+  app.post("/api/session-exercises", async (req, res) => {
+    try {
+      const sessionExerciseData = insertSessionExerciseSchema.parse(req.body);
+      const sessionExercise = await storage.createSessionExercise(sessionExerciseData);
+      res.status(201).json(sessionExercise);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors });
       }
-      
-      res.json(session);
-    } catch (err) {
-      handleError(err, res);
+      res.status(500).json({ message: "Failed to create session exercise" });
     }
   });
   
-  apiRouter.patch("/sessions/:id/data", async (req: Request, res: Response) => {
+  app.patch("/api/session-exercises/:id/complete", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "Invalid ID" });
+    }
+    
+    const { notes } = req.body;
+    const updated = await storage.completeSessionExercise(id, notes);
+    if (!updated) {
+      return res.status(404).json({ message: "Session exercise not found" });
+    }
+    
+    res.json(updated);
+  });
+  
+  // Progress routes
+  app.get("/api/progress/:patientId", async (req, res) => {
+    const patientId = parseInt(req.params.patientId);
+    if (isNaN(patientId)) {
+      return res.status(400).json({ message: "Invalid patient ID" });
+    }
+    
+    const records = await storage.getProgressRecords(patientId);
+    res.json(records);
+  });
+  
+  app.post("/api/progress", async (req, res) => {
     try {
-      const sessionId = parseInt(req.params.id);
-      const { postureQuality, rangeOfMotion, painLevel, notes } = req.body;
-      
-      const session = await storage.updateSessionData(
-        sessionId,
-        postureQuality,
-        rangeOfMotion,
-        painLevel,
-        notes
-      );
-      
-      if (!session) {
-        return res.status(404).json({ message: "Session not found" });
+      const progressData = insertProgressRecordSchema.parse(req.body);
+      const progress = await storage.createProgressRecord(progressData);
+      res.status(201).json(progress);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors });
       }
-      
-      res.json(session);
-    } catch (err) {
-      handleError(err, res);
+      res.status(500).json({ message: "Failed to create progress record" });
     }
   });
   
-  // Progress Measurements endpoints
-  apiRouter.get("/patients/:id/progress", async (req: Request, res: Response) => {
-    try {
-      const patientId = parseInt(req.params.id);
-      const measurements = await storage.getProgressMeasurementsByPatientId(patientId);
-      res.json(measurements);
-    } catch (err) {
-      handleError(err, res);
+  // Engagement routes
+  app.get("/api/engagement/:userId", async (req, res) => {
+    const userId = parseInt(req.params.userId);
+    if (isNaN(userId)) {
+      return res.status(400).json({ message: "Invalid user ID" });
     }
+    
+    const metrics = await storage.getEngagementMetrics(userId);
+    res.json(metrics);
   });
   
-  apiRouter.post("/progress-measurements", async (req: Request, res: Response) => {
-    try {
-      const measurementData = insertProgressMeasurementSchema.parse(req.body);
-      const measurement = await storage.createProgressMeasurement(measurementData);
-      res.status(201).json(measurement);
-    } catch (err) {
-      handleError(err, res);
+  app.get("/api/engagement/:userId/latest", async (req, res) => {
+    const userId = parseInt(req.params.userId);
+    if (isNaN(userId)) {
+      return res.status(400).json({ message: "Invalid user ID" });
     }
+    
+    const metric = await storage.getLatestEngagementMetric(userId);
+    if (!metric) {
+      return res.status(404).json({ message: "No engagement metrics found" });
+    }
+    
+    res.json(metric);
   });
   
-  // Alerts endpoints
-  apiRouter.get("/alerts", async (_req: Request, res: Response) => {
+  app.post("/api/engagement", async (req, res) => {
     try {
-      const alerts = await storage.getUnresolvedAlerts();
-      res.json(alerts);
+      const engagementData = insertEngagementMetricSchema.parse(req.body);
+      const metric = await storage.createEngagementMetric(engagementData);
+      res.status(201).json(metric);
     } catch (err) {
-      handleError(err, res);
-    }
-  });
-  
-  apiRouter.get("/patients/:id/alerts", async (req: Request, res: Response) => {
-    try {
-      const patientId = parseInt(req.params.id);
-      const alerts = await storage.getAlertsByPatientId(patientId);
-      res.json(alerts);
-    } catch (err) {
-      handleError(err, res);
-    }
-  });
-  
-  apiRouter.post("/alerts", async (req: Request, res: Response) => {
-    try {
-      const alertData = insertAlertSchema.parse(req.body);
-      const alert = await storage.createAlert(alertData);
-      res.status(201).json(alert);
-    } catch (err) {
-      handleError(err, res);
-    }
-  });
-  
-  apiRouter.patch("/alerts/:id/status", async (req: Request, res: Response) => {
-    try {
-      const alertId = parseInt(req.params.id);
-      const { status } = req.body;
-      
-      if (!['unread', 'read', 'resolved'].includes(status)) {
-        return res.status(400).json({ message: "Invalid status" });
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors });
       }
-      
-      const alert = await storage.updateAlertStatus(alertId, status);
-      
-      if (!alert) {
-        return res.status(404).json({ message: "Alert not found" });
-      }
-      
-      res.json(alert);
-    } catch (err) {
-      handleError(err, res);
+      res.status(500).json({ message: "Failed to create engagement metric" });
     }
   });
   
-  // AI Analysis endpoint for posture analysis and exercise recommendations
-  apiRouter.post("/ai/analyze-posture", async (req: Request, res: Response) => {
+  app.patch("/api/engagement/:userId/streak", async (req, res) => {
+    const userId = parseInt(req.params.userId);
+    if (isNaN(userId)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+    
+    const { streak } = req.body;
+    if (typeof streak !== 'number' || streak < 0) {
+      return res.status(400).json({ message: "Invalid streak value" });
+    }
+    
+    const updated = await storage.updateEngagementStreak(userId, streak);
+    if (!updated) {
+      return res.status(404).json({ message: "Engagement metric not found" });
+    }
+    
+    res.json(updated);
+  });
+  
+  // Therapist Notes routes
+  app.get("/api/therapist-notes/:patientId", async (req, res) => {
+    const patientId = parseInt(req.params.patientId);
+    if (isNaN(patientId)) {
+      return res.status(400).json({ message: "Invalid patient ID" });
+    }
+    
+    const notes = await storage.getTherapistNotes(patientId);
+    res.json(notes);
+  });
+  
+  app.post("/api/therapist-notes", async (req, res) => {
     try {
-      const { poseData, patientId, exerciseId } = req.body;
-      
-      if (!poseData || !Array.isArray(poseData) || !patientId) {
-        return res.status(400).json({ message: "Invalid data format" });
-      }
-      
-      // In a real application, this would use TensorFlow.js or a similar library
-      // to analyze the pose data and provide feedback
-      const feedback = {
-        score: Math.round(Math.random() * 40 + 60), // Random score between 60-100
-        issues: [],
-        correctForm: true
-      };
-      
-      if (feedback.score < 80) {
-        feedback.correctForm = false;
-        if (exerciseId === 1) { // External rotation exercise
-          feedback.issues.push({
-            part: "left_arm",
-            message: "Keep your elbow closer to your body",
-            severity: "medium"
-          });
-        } else if (exerciseId === 2) { // Wall slides
-          feedback.issues.push({
-            part: "shoulders",
-            message: "Keep shoulders back and down",
-            severity: "low"
-          });
-        }
-      }
-      
-      res.json(feedback);
+      const noteData = insertTherapistNoteSchema.parse(req.body);
+      const note = await storage.createTherapistNote(noteData);
+      res.status(201).json(note);
     } catch (err) {
-      handleError(err, res);
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors });
+      }
+      res.status(500).json({ message: "Failed to create therapist note" });
     }
   });
   
-  apiRouter.post("/ai/recommend-exercises", async (req: Request, res: Response) => {
+  // Payment routes
+  app.get("/api/payments/:userId", async (req, res) => {
+    const userId = parseInt(req.params.userId);
+    if (isNaN(userId)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+    
+    const payments = await storage.getPaymentRecords(userId);
+    res.json(payments);
+  });
+  
+  app.post("/api/payments", async (req, res) => {
     try {
-      const { patientId, bodyPart, currentExerciseIds } = req.body;
-      
-      if (!patientId || !bodyPart) {
-        return res.status(400).json({ message: "Patient ID and body part are required" });
-      }
-      
-      // Get available exercises for the body part
-      const allExercises = await storage.getExercisesByBodyPart(bodyPart);
-      
-      // Filter out exercises that are already assigned
-      const currentIds = currentExerciseIds || [];
-      const availableExercises = allExercises.filter(ex => !currentIds.includes(ex.id));
-      
-      // In a real application, this would use TensorFlow.js or a similar library
-      // to recommend exercises based on patient progress and performance
-      const recommendations = availableExercises.slice(0, 2).map(exercise => ({
-        exercise,
-        confidence: Math.round(Math.random() * 40 + 60),
-        reason: exercise.difficulty === 'beginner' 
-          ? 'Recommended for building foundational strength'
-          : 'Recommended to challenge and improve current abilities'
-      }));
-      
-      res.json(recommendations);
+      const paymentData = insertPaymentRecordSchema.parse(req.body);
+      const payment = await storage.createPaymentRecord(paymentData);
+      res.status(201).json(payment);
     } catch (err) {
-      handleError(err, res);
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors });
+      }
+      res.status(500).json({ message: "Failed to create payment record" });
     }
   });
   
-  // Register API routes
-  app.use("/api", apiRouter);
-  
+  app.patch("/api/payments/:id/status", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "Invalid payment ID" });
+    }
+    
+    const { status, receiptUrl } = req.body;
+    if (!status || !["pending", "processed", "failed"].includes(status)) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
+    
+    const updated = await storage.updatePaymentStatus(id, status, receiptUrl);
+    if (!updated) {
+      return res.status(404).json({ message: "Payment record not found" });
+    }
+    
+    res.json(updated);
+  });
+
   const httpServer = createServer(app);
   
   return httpServer;
