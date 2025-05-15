@@ -773,7 +773,8 @@ var vite_config_default = defineConfig({
     outDir: "../dist",
     emptyOutDir: true,
     rollupOptions: {
-      external: ["@mediapipe/pose", "@tensorflow/tfjs-backend-webgpu"]
+      external: []
+      // Remove externals for browser build
     }
   }
 });
