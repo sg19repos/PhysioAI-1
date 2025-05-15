@@ -52,7 +52,7 @@ const MotionTracker: React.FC<MotionTrackerProps> = ({
         });
         
         // Set pose detection options
-        await pose.setOptions({
+        pose.setOptions({
           modelComplexity: 1,
           smoothLandmarks: true,
           enableSegmentation: false,
@@ -92,7 +92,7 @@ const MotionTracker: React.FC<MotionTrackerProps> = ({
           });
           
           cameraRef.current = camera;
-          await camera.start();
+          camera.start();
         }
       } catch (error) {
         console.error('Error initializing pose detection:', error);
@@ -106,9 +106,6 @@ const MotionTracker: React.FC<MotionTrackerProps> = ({
     return () => {
       if (cameraRef.current) {
         cameraRef.current.stop();
-      }
-      if (poseRef.current) {
-        poseRef.current.close();
       }
     };
   }, []);
